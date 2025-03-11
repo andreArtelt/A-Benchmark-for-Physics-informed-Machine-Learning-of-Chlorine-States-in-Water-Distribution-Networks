@@ -1,9 +1,12 @@
 import os
 import random
+from joblib import Parallel, delayed
 from pathlib import Path
 import numpy as np
-from epyt_flow.simulation import ScenarioSimulator, ToolkitConstants
+from epyt_flow.simulation import ScenarioSimulator, ToolkitConstants, ModelUncertainty, \
+    RelativeUniformUncertainty, AbsoluteGaussianUncertainty
 from epyt_flow.utils import to_seconds
+from water_benchmark_hub import load
 
 
 def create_spike_pattern(pattern_length: int) -> np.ndarray:
@@ -66,19 +69,24 @@ def run_sim(f_inp_in: str, f_out, pattern_type: str = "spike",
         sim.enable_chemical_analysis()
 
         pattern_length = max(sim.epanet_api.getPatternLengths())
-        if pattern_type == "spike":
-            pattern = create_spike_pattern(pattern_length)
-        elif pattern_type == "wave":
-            pattern = create_wave_pattern(pattern_length)
-        elif pattern_type == "random":
-            pattern = create_random_pattern(pattern_length)
-        else:
-            raise ValueError("Unknown pattern type")
 
-        reservoir_id = sim.epanet_api.getNodeReservoirNameID()[0]
-        sim.add_quality_source(node_id=reservoir_id,
-                               pattern=pattern,
-                               source_type=ToolkitConstants.EN_CONCEN)
+        reservoir_ids = []
+        for reservoir_id in sim.epanet_api.getNodeReservoirNameID():
+            reservoir_ids.append(reservoir_id)
+
+            if pattern_type == "spike":
+                pattern = create_spike_pattern(pattern_length)
+            elif pattern_type == "wave":
+                pattern = create_wave_pattern(pattern_length)
+            elif pattern_type == "random":
+                pattern = create_random_pattern(pattern_length)
+            else:
+                raise ValueError("Unknown pattern type")
+
+            sim.add_quality_source(node_id=reservoir_id,
+                                   pattern=pattern,
+                                   pattern_id=f"cl-{reservoir_id}",
+                                   source_type=ToolkitConstants.EN_CONCEN)
 
         # Place quality and flow sensor everywhere
         sim.set_flow_sensors(sensor_locations=sim.sensor_config.links)
@@ -93,9 +101,9 @@ def run_sim(f_inp_in: str, f_out, pattern_type: str = "spike",
         res = sim.run_simulation()
 
         np.savez(f_out,
-                 injection_node_id=reservoir_id,
+                 injection_node_id=reservoir_ids,
                  injection_pattern=pattern,
-                 injection_node_idx=sim.sensor_config.nodes.index(reservoir_id),
+                 injection_node_idx=[sim.sensor_config.nodes.index(r_id) for r_id in reservoir_ids],
                  node_ids=sim.sensor_config.nodes,
                  link_ids=sim.sensor_config.links,
                  flow_data=res.get_data_flows(),
@@ -103,7 +111,30 @@ def run_sim(f_inp_in: str, f_out, pattern_type: str = "spike",
                  link_chlorine_data=res.get_data_links_quality())
 
 
-def create_dataset(network_desc="Hanoi"):
+def create_cydbp_scenarios(n_scenarios: int = 1000) -> None:
+    network = load("Network-CY-DBP")
+    cydbp_inp = network.load()
+
+    for i in range(1, n_scenarios+1):
+        with ScenarioSimulator(f_inp_in=cydbp_inp) as scenario:
+            # Specify uncertainties
+            my_uncertainties = {"global_pipe_length_uncertainty": RelativeUniformUncertainty(low=0.85, high=1.15),
+                                "global_pipe_roughness_uncertainty": RelativeUniformUncertainty(low=0.85, high=1.15),
+                                "global_base_demand_uncertainty": RelativeUniformUncertainty(low=0.85, high=1.15),
+                                "global_demand_pattern_uncertainty": AbsoluteGaussianUncertainty(mean=0, scale=.1)}
+            scenario.set_model_uncertainty(ModelUncertainty(**my_uncertainties))
+
+            # Run simulation to in order to apply the uncertainties
+            scenario.set_general_parameters(simulation_duration=to_seconds(days=1))
+            scenario.run_hydraulic_simulation()
+
+            # Export .inp file with uncertainties
+            f_inp_out = os.path.join("data", "Networks", "CY-DBP", f"Scenario-{i}.inp")
+
+            scenario.save_to_epanet_file(inp_file_path=f_inp_out)
+
+
+def create_dataset(network_desc: str, n_jobs: int = 5):
     # Specifies path to scenarios and chlorine injection pattern type
     path_to_scenarios = os.path.join("data", "Networks", network_desc)
 
@@ -116,12 +147,16 @@ def create_dataset(network_desc="Hanoi"):
                                       f"randomized_demands={randomized_demands}-{pattern_type}")
             Path(f_out_path).mkdir(parents=True, exist_ok=True)
 
-            for f_inp_in, i in zip(scenarios, range(len(scenarios))):
-                print(i, f_inp_in)
-                run_sim(f_inp_in, os.path.join(f_out_path, f"{i}.npz"), pattern_type,
+            def run_sim_sceanrio(f_inp_in: str, idx: int):
+                run_sim(f_inp_in, os.path.join(f_out_path, f"{idx}.npz"), pattern_type,
                         randomized_demands)
+            Parallel(n_jobs=n_jobs)(delayed(run_sim_sceanrio)(f_inp_in, i)
+                for f_inp_in, i in zip(scenarios, range(len(scenarios))))
 
 
 if __name__ == "__main__":
     create_dataset("Net1")
     create_dataset("Hanoi")
+
+    create_cydbp_scenarios()
+    create_dataset("CY-DBP", n_jobs=10)

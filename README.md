@@ -5,21 +5,22 @@ This repository contains the benchmark and the implementation of the experiments
 ## Abstract
 
 Ensuring high-quality drinking water is a critical responsibility of water utilities, with chlorine being the main disinfectant typically used. Accurate estimation of chlorine concentrations in the dynamic environment of water distribution networks (WDNs) is essential to ensure safe water supply.
-This work introduces a comprehensive benchmark for training and evaluation of chlorine concentration estimation methodologies in WDNs.
-The benchmark includes a diverse dataset of 12,000 scenarios from the Net1 and Hanoi networks (two popular WDNs in literature), featuring various chlorine injection patterns to capture diverse physical dynamics.
-To provide baseline evaluations, we propose two deep learning models: a physics-informed Graph Neural Network (GNN) and a physics-guided Recurrent Neural Network (RNN). 
-Both models are designed for chlorine state estimation and are evaluated against the proposed benchmark using standardized metrics.
+This work introduces a comprehensive and carefully created benchmark for training and evaluation of chlorine concentration estimation methodologies in WDNs.
+The benchmark includes a diverse dataset of 18,000 scenarios of the widely studied 'Hanoi', 'Net1', and the more recent and complex 'CY-DBP' water networks, featuring various chlorine injection patterns to capture diverse physical dynamics.
+To provide baseline evaluations, we propose and evaluate two neural surrogate models for chlorine state estimation: a physics-informed Graph Neural Network (GNN) and a physics-guided Recurrent Neural Network (RNN).
 
 ## Benchmark for Chlorine State Estimation
 
 ### Data Set
 
-This benchmark data set concerns the transport, decay, and mixing of chlorine in water distribution networks (WDNs). It contains two different WDNs, each with 1000 different scenarios (different demand patterns and network parameters) and different Chlorine injection patterns.
+This benchmark data set concerns the transport, decay, and mixing of chlorine in water distribution networks (WDNs). It contains three different WDNs (Net1, Hanoi, and CY-DBP), each with 1000 different scenarios (different demand patterns and network parameters) and different Chlorine injection patterns.
 The data set was created and simulated by using [EPyT-Flow](https://github.com/WaterFutures/EPyT-Flow).
 
-The data set is based on the [LeakDB data set](https://waterfutures.github.io/WaterBenchmarkHub/benchmarks/KIOS-LeakDB.html) and contains 1,000 scenarios based on [Net1](https://waterfutures.github.io/WaterBenchmarkHub/benchmarks/network-Net1.html) and another 1,000 scenarios based on the [Hanoi network](https://waterfutures.github.io/WaterBenchmarkHub/benchmarks/network-Hanoi.html) -- the demand patterns of those scenarios are the same as in LeakDB and each scenario is 30 days long (30min time steps).
+For the 'Net1' and 'Hanoi' networks, we build on the [LeakDB data set](https://waterfutures.github.io/WaterBenchmarkHub/benchmarks/KIOS-LeakDB.html) and generate 1,000 scenarios based on [Net1](https://waterfutures.github.io/WaterBenchmarkHub/benchmarks/network-Net1.html) and another 1,000 scenarios based on the [Hanoi network](https://waterfutures.github.io/WaterBenchmarkHub/benchmarks/network-Hanoi.html) -- the demand patterns of those scenarios are the same as in LeakDB and each scenario is 30 days long (30min time steps).
+For the [CY-DBP](https://waterfutures.github.io/WaterBenchmarkHub/benchmarks/network-CY-DBP.html) network, we mimic the uncertainties from LeakDB to generate a 1,000 similar but slightly different scenarios.
 
-In each scenario, a single chlorine pump (specifying the chlorine concentration of the external inflow) is installed at the reservoir. The chlorine concentration over time is monitored at each node and link (pipe) in the network. Furthermore, the flow rate at each link (pipe) is monitored as well. All bulk and wall reaction coefficients are set to zero — i.e., only the transport, decay, and mixing of chlorine are simulated.
+
+In each scenario, a chlorine pump (specifying the chlorine concentration of the external inflow) is installed at the reservoir -- note that the CY-DBP has two reservoirs. The chlorine concentration over time is monitored at each node and link (pipe) in the network. Furthermore, the flow rate at each link (pipe) is monitored as well. All bulk and wall reaction coefficients are set to zero — i.e., only the transport, decay, and mixing of chlorine are simulated.
 For each scenario, three different Chlorine injection patterns were applied: a spike pattern, a periodic wave-like pattern, and a random pattern -- see Figure below.
 <p float="middle">
   <img src="cl_injection_spike.png" width="32%" />
@@ -28,7 +29,7 @@ For each scenario, three different Chlorine injection patterns were applied: a s
 </p> 
 Furthermore, for each case there also exist a scenario where the demand pattern was randomized in order to break any correlation between demand pattern and Chlorine concentration -- see paper for details.
 
-In total, the data set contains 12,0000 scenarios. The data generation process is implemented in [create_data.py](create_data.py).
+In total, the data set contains *18,0000 scenarios*. The data generation process is implemented in [create_data.py](create_data.py).
 
 #### How to load the data set in Python
 
@@ -49,21 +50,26 @@ hanoi_topology = d.load_network_topology(net_desc="Hanoi")
 
 ### Evaluation
 
-We propose assessing performance using various metrics. For a single node prediction, denoted as $\hat{y}_i$, this can be extended to multiple nodes by, for example, averaging over all nodes $i$:
-- Mean-squared-error (MSE) and the Mean-absolute-error (MAE) as a standardized mean-squared-error metric. These metrics report a single number that allows an easy comparison of different methods/algorithms/solutions/etc.
-    
-    The MSE is defined as:
-    $\frac{1}{T}\sum_{t=1}^{T} \left(\hat{y}_i(t) - y_i(t)\right)^2$
+We propose assessing performance using various, carefully chosen metrics. Here, we aim for easy-to-interpret metrics as well as metrics that are well-suited for the specific characteristics of the proposed benchmark.
+For a single node prediction, denoted as $\hat{y}_i$, this can be extended to multiple nodes by, for example, averaging over all nodes $i$:
+- **Non-negativity of the predicted chlorine concentrations** -- i.e. evaluating a trivial physical plausibility of the predicted concentrations:
+    $\sum_{t=1}^{T} \Bbb{1}(\hat{y}_i(t) \geq 0)$
 
-    The MAE is given as:
+    \item **Upper bound of a physically plausible chlorine concentration.** This depends on the maximum concentration at the injection points during past time steps, which may still influence the system. This concept is referred to as the memory of the system and relates to the maximum time required for water from the injection location to reach any node in the network. Given that flow rates are assumed to be known in this study, the maximum transport times for all nodes can be explicitly calculated. This also relates to the accuracy of predictions for each node, as a longer transport time implies a greater range of past inputs that can affect the output, introducing more uncertainty into the model.
+    $\frac{1}{T-K}\sum_{t=K}^T \Bbb{1}\left(\hat{y}_i(t) \leq \underset{k\in[t-K, t]}{\max}(y_r(k))\right)$
+    where $K$ refers to the maximum transport time in the water network, and $y_r$ refers to the chlorine concentration at the injection location over time -- note that this generalizes for multiple injection sources.
+- **The Mean-absolute-error (MAE)** as a standardized and easy-to-interpret error metric:
     $\frac{1}{T}\sum_{t=1}^{T} \left|\hat{y}_i(t) - y_i(t)\right|$
-- The running MSE and MAE for evaluating the performance over time -- i.e. determining whether the performance remains stable and robust throughout the duration.
+    where $T$ refers to the length of the time horizon -- i.e. length of the simulated scenario.
+- **The running MAE** for evaluating the performance over time by accumulating the performance up to some given time point. By this, we evaluate whether the performance remains stable and robust throughout the entire duration.
 
-    The running MSE is a function that maps time to performance (i.e. MSE):
-    $f(k) = \frac{1}{k}\sum_{t=1}^{k} \left(\hat{y}_i(t) - y_i(t)\right)^2$
-    
-    Similarly, the running MAE is also a function that maps time to performance (i.e. MAE):
+    The running MAE is a function that maps a time horizon $k\leq T$ to accumulated performance (i.e. MAE):
     $f(k) = \frac{1}{k}\sum_{t=1}^{k} \left|\hat{y}_i(t) - y_i(t)\right|$
+- **The amount of chlorine concentration which the model is over/underestimating** -- i.e. indicating a bias for over or undershooting the true concentration.
+    For this purpose, we sum up all positive and negative errors, and take their difference. A result close to zero indicates no bias, whereas a positive/negative result indicates a bias for over/underestimating the true concentration:
+    $\left(\sum_{t=1}^T \max(0, e_i(t))\right) - \left(\sum_{t=1}^T \max(0, -1 \cdot e_i(t))\right)$
+    where
+    $e_i(t) = \hat{y}_i(t) - y_i(t)$ 
 
 In addition to averaging scores across all nodes, we recommend comparing scores for each node individually. This approach allows us to assess whether errors and performance are uniformly distributed throughout the WDN or if certain nodes pose greater challenges than others.
 For example, a method's performance might be influenced by the node's distance from the reservoir (chlorine injection point) -- i.e. predicting concentrations at nodes located farther away could be more challenging than at nodes closer to the injection site.
@@ -77,11 +83,14 @@ The evaluation metrics are implemented in the `Evaluator` class. Besides methods
 # Load test data
 X_test, y_test = ....
 
+# Get chlorine concentration at injection node
+cl_injection = ....
+
 # Predict Cl states
 y_test_pred = ....
 
 # Evaluate predictions using all proposed metrics
-print(Evaluator.evaluate_predictions(y_test_pred, y_test))
+print(Evaluator.evaluate_predictions(y_test_pred, y_test, cl_injection))
 ```
 
 ## How to Run the Experiments from the Paper
@@ -91,8 +100,8 @@ unpack it, and put it into "data" in the root directory of this folder.
 
 The experiments regarding the RNN are implemented in [run_exp_rnn.py](run_exp_rnn.py)
 (and [experiments_rnn.py](experiments_rnn.py)) -- all configurations can be run by executing the
-slurm scripts [run_exp_rnn_net1.job.sbatch](run_exp_rnn_net1.job.sbatch) and
-[run_exp_rnn_hanoi.job.sbatch](run_exp_rnn_hanoi.job.sbatch).
+slurm scripts [run_exp_rnn_net1.job.sbatch](run_exp_rnn_net1.job.sbatch),
+[run_exp_rnn_hanoi.job.sbatch](run_exp_rnn_hanoi.job.sbatch), and [run_exp_rnn_cydbp.job.sbatch](run_exp_rnn_cybp.job.sbatch).
 
 The experiments regarding the GNN are implemented in [graph_pde.py](graph_pde.py)
  -- all configurations can be run by executing the
@@ -105,9 +114,9 @@ MIT license - See [LICENSE](LICENSE).
 ## How to Cite?
 
 ```
-@misc{machinelearningchlorinestateestimationbenchmark2024,
+@misc{machinelearningchlorinestateestimationbenchmark2025,
         author = {Luca Hermes, André Artelt, Stelios G. Vrachimis, Marios M. Polycarpou, Barbara Hammer},
-        title = {A Benchmark for Physics-informed Machine Learning of Chlorine States in Water Distribution Networks},
-        year = {2024}
+        title = {{A Benchmark for Physics-informed Machine Learning of Chlorine States in Water Distribution Networks}},
+        year = {2025}
     }
 ```

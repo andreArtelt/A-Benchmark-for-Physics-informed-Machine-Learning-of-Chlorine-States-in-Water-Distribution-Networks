@@ -1,2 +1,3 @@
-epyt-flow>=0.6.0
+epyt-flow>=0.10.0
+water-benchmark-hub
 tensorflow==2.17.0

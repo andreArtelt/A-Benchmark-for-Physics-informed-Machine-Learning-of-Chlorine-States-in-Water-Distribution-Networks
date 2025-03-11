@@ -46,9 +46,6 @@ class RecurrentNeuralNetworkModel():
 
 def train_model(net_desc: str, target_node_id: str, data_configs: list[dict],
                 path_to_data: str = "data", dir_out: str = "results") -> None:
-    """
-    TODO
-    """
     X_train, y_train = [], []
     X_val, y_val = [], []
     test_data = {}
@@ -104,8 +101,16 @@ def train_model(net_desc: str, target_node_id: str, data_configs: list[dict],
     for c_id, (X_test, y_test) in test_data.items():
         y_test_pred = model.predict(X_test)
 
+        # Last dimension(s) in X denotes the CL injection
+        X_test = scaler.inverse_transform(X_test.reshape(-1, X_test.shape[-1])).reshape(X_test.shape)
+        if net_desc == "CY-DBP":
+            n_cols = X_test.shape[2]
+            cl_injection = X_test[:, :, n_cols-2:n_cols]
+        else:
+            cl_injection = X_test[:, :, -1]
+
         # Evaluate predictions
-        eval_results[c_id] = Evaluator.evaluate_predictions(y_test_pred, y_test)
+        eval_results[c_id] = Evaluator.evaluate_predictions(y_test_pred, y_test, cl_injection)
 
     f_out = os.path.join(dir_out, f"eval-test_{net_desc}_node{target_node_id}.bin")
 
@@ -116,9 +121,6 @@ def train_model(net_desc: str, target_node_id: str, data_configs: list[dict],
 def eval_model_on_data_config(net_desc: str, target_node_id: str, data_configs: list[dict],
                               f_out: str, path_to_data: str = "data", dir_in: str = "results"
                               ) -> None:
-    """
-    TODO
-    """
     test_data = {}
 
     scaler = load(os.path.join(dir_in, f"scaler_{net_desc}_node{target_node_id}.bin"))
@@ -143,8 +145,16 @@ def eval_model_on_data_config(net_desc: str, target_node_id: str, data_configs: 
 
         y_pred = model.predict(X)
 
+        # Last dimension(s) in X denotes the CL injection
+        X = scaler.inverse_transform(X.reshape(-1, X.shape[-1])).reshape(X.shape)
+        if net_desc == "CY-DBP":
+            n_cols = X.shape[2]
+            cl_injection = X[:, :, n_cols-2:n_cols-1]
+        else:
+            cl_injection = X[:, :, -1]
+
         # Evaluate predictions
-        eval_results[c_id] = Evaluator.evaluate_predictions(y_pred, y)
+        eval_results[c_id] = Evaluator.evaluate_predictions(y_pred, y, cl_injection)
 
     Path(str(Path(f_out).parent)).mkdir(parents=True, exist_ok=True)
     dump(eval_results, f_out, compress=True)
