@@ -95,7 +95,7 @@ print(Evaluator.evaluate_predictions(y_test_pred, y_test, cl_injection))
 
 ## How to Run the Experiments from the Paper
 
-Make sure to first download the [data set](https://filedn.com/lumBFq2P9S74PNoLPWtzxG4/A-Benchmark-for-Physics-informed-Deep-Learning-of-Chlorine-States-in-Water-Distribution-Networks/data.zip),
+Make sure to first download the [data set](https://filedn.com/lumBFq2P9S74PNoLPWtzxG4/A-Benchmark-for-Physics-informed-Deep-Learning-of-Chlorine-States-in-Water-Distribution-Networks/data.tar.gz),
 unpack it, and put it into "data" in the root directory of this folder.
 
 The experiments regarding the RNN are implemented in [run_exp_rnn.py](run_exp_rnn.py)
